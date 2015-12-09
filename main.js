@@ -3,6 +3,15 @@ var imageLoader = document.getElementById('imageLoader');
 var canvas = document.getElementById('imageCanvas');
 var ctx = canvas.getContext('2d');
 
+window.onload = function() {
+  default_img = new Image();
+  default_img.src = './coffee.png';
+  default_img.onload = function() {
+    canvas.width = default_img.width;
+    canvas.height = default_img.height;
+    ctx.drawImage(default_img, 0, 0);
+  };
+};
 
 function handleImage(e){
     var reader = new FileReader();
@@ -11,7 +20,7 @@ function handleImage(e){
         img.onload = function(){
             canvas.width = img.width;
             canvas.height = img.height;
-            ctx.drawImage(img,0,0);
+            ctx.drawImage(img, 0, 0);
         }
         img.src = event.target.result;
     }
