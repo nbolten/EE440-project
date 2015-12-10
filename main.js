@@ -7,9 +7,6 @@ var imageLoader = document.getElementById('imageLoader');
 var canvas = document.getElementById('imageCanvas');
 var ctx = canvas.getContext('2d');
 
-default_img = new Image();
-default_img.src = './coffee.png';
-
 function loadImage(image) {
   // Resize the image to fit nicely in the div (and increase filter speed!)
   canvasDivWidth = $('#canvas-container').width();
@@ -24,6 +21,8 @@ function loadImage(image) {
   window.srcPixels = new Uint8ClampedArray(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
 
+default_img = new Image();
+default_img.src = './coffee.png';
 default_img.onload = function() {
   loadImage(default_img);
 };
@@ -50,96 +49,38 @@ $('#resetButton').click(function() {
   ctx.putImageData(imageData, 0, 0);
 });
 
-///////////////////////
-// Per-pixel filters //
-///////////////////////
+//////////////////////////////////
+// Global canvas image accessor //
+//////////////////////////////////
 
-function filterImage(filterFunc) {
-  imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  pixels = imageData.data;
-  filtered = filterFunc(pixels);
-  imageData.data.set(filtered);
-  ctx.putImageData(imageData, 0, 0);
+function getImageData() {
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-function grayScale(pixels) {
-  for (var i=0; i < pixels.length; i += 4) {
-    r = pixels[i];
-    g = pixels[i + 1];
-    b = pixels[i + 2];
+//////////////////////////////
+// Generic kernel functions //
+//////////////////////////////
 
-    v = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    pixels[i] = v;
-    pixels[i + 1] = v;
-    pixels[i + 2] = v;
-  }
-  return pixels;
-}
+Kernels = {};
 
-$('#grayScaleButton').click(function() {
-  filterImage(grayScale);
-});
-
-////////////////////////////
-// Convolution operations //
-////////////////////////////
-
-function convolve(pixels, weights) {
-  // It has to be a square filter (and odd dimensions)
-  dim = Math.round(Math.sqrt(weights.length));
-  center = Math.floor(dim / 2);
-  for (y = 0; y < canvas.height; y++) {
-    for (x = 0; x < canvas.width; x++) {
-      r = 0;
-      g = 0;
-      b = 0;
-      a = 0;
-
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          // input array is 1D, but we need to reat it as 2D
-          // What would the 2-D coordinates be? If either are <0,
-          // don't apply weight to that pixel.
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            offset = (y2d * canvas.width + x2d) * 4;
-            weight = weights[cy * dim + cx];
-            r += pixels[offset] * weight;
-            g += pixels[offset + 1] * weight;
-            b += pixels[offset + 2] * weight;
-            a += pixels[offset + 3] * weight;
-          }
-        }
-      }
-
-      centerIndex = (y * canvas.width + x) * 4;
-      pixels[centerIndex] = r;
-      pixels[centerIndex + 1] = g;
-      pixels[centerIndex + 2] = b;
-      pixels[centerIndex + 3] = a + (255 - a);
-    }
-  }
-
-  return pixels;
-}
-
-function gaussian(x, sigma) {
+Kernels.gaussianFunc = function(x, sigma) {
   return (1.0 / (2 * Math.PI * Math.pow(sigma, 2))) * Math.exp(-x / (2 * Math.pow(sigma, 2)));
-}
+};
 
-function normalizeKernel(kernel) {
-  // Normalize (so it sums to 1)
-  var output = new Float32Array(kernel.length);
+Kernels.normalize = function(kernel) {
+  // Normalize a kernel so it sums to 1
+  var newkernel = new Float32Array(kernel.length);
 
   var weightsum = kernel.reduce(function(a, b) { return a + b; }, 0);
   for (i = 0; i < kernel.length; i++) {
-    output[i] = kernel[i] / weightsum;
+    newkernel[i] = kernel[i] / weightsum;
   }
-  return output;
-}
+  return newkernel;
+};
 
-function gaussianKernel(size, sigma) {
+Kernels.gaussian = function(sigma, size) {
+  sigma = size || 1;
+  size = size || 1;
   // Will generate a gaussian-looking kernel for a given variance
   dim = size * 2 + 1;
   center = size;
@@ -148,238 +89,28 @@ function gaussianKernel(size, sigma) {
     kernel2D[y] = [];
     for (x = 0; x < dim; x++) {
       distance = Math.sqrt(Math.pow(y - center, 2) + Math.pow(x - center, 2));
-      kernel2D[y][x] = gaussian(distance, sigma);
+      kernel2D[y][x] = this.gaussianFunc(distance, sigma);
     }
   }
   // Flatten
   var kernel = kernel2D.reduce(function(a, b) { return a.concat(b); });
   // Normalize (so it sums to 1)
-  kernel = normalizeKernel(kernel)
+  kernel = this.normalize(kernel);
   return kernel;
-}
+};
 
-function gaussianBlur(pixels) {
-  kernel = gaussianKernel(1, 1);
-  convolved = convolve(pixels, kernel);
-  return convolved;
-}
-
-$('#gaussianBlurButton').click(function() {
-  filterImage(gaussianBlur);
-});
-
-//////////////////////
-// Bilateral filter //
-//////////////////////
-
-
-function bilateralFilter(pixels) {
-  // FIXME: these need to be arguments
-  kernelSize = 2;
-  dim = kernelSize * 2 + 1;
-  // Running with 10, 2 like 5 times makes a cartoon effect
-  sigmaG = 10;
-  sigmaR = 2;
-
-  // Output should be a different data structure, as iterating over the same
-  // array that's being outputted will result in redundant convolutions.
-  output = new Uint8ClampedArray(pixels.length);
-
-  center = Math.floor(dim / 2);
-
-  // Precompute the Gaussian
-  myGaussianKernel = gaussianKernel(kernelSize, sigmaG);
-
-  for (y = 0; y < canvas.height; y++) {
-    for (x = 0; x < canvas.width; x++) {
-      centerIndex = (y * canvas.width + x) * 4;
-      centerI = (pixels[centerIndex] + pixels[centerIndex + 1] + pixels[centerIndex + 2]) / 3.0 ;
-
-      // Calculate the range kernel (must compute now due to need
-      // to normalize the weights to sum to 1).
-      // Just need to know the intensities vector in the neighborhood
-      weights = [];
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            // Get the intensity
-            offset = (y2d * canvas.width + x2d) * 4;
-            otherI = (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3.0 ;
-            intensity_diff = Math.abs(centerI - otherI);
-            weight_range = gaussian(intensity_diff, sigmaR);
-          } else {
-            // We're outside the image (set to 0, why not)
-            weight_range = 0;
-          }
-          // Now combine with the Gaussian
-          weight_gaussian = myGaussianKernel[cy * dim + cx];
-          weights.push(weight_gaussian * weight_range);
-        }
-      }
-
-      // Finally, normalize so weights sum to 1.
-      weights = normalizeKernel(weights);
-
-      r = g = b = 0;
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          // input array is 1D, but we need to reat it as 2D
-          // What would the 2-D coordinates be? If either are <0,
-          // don't apply weight to that pixel.
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            offset = (y2d * canvas.width + x2d) * 4;
-            weight = weights[cy * dim + cx];
-            r += pixels[offset] * weight;
-            g += pixels[offset + 1] * weight;
-            b += pixels[offset + 2] * weight;
-          }
-        }
-      }
-
-      output[centerIndex] = r;
-      output[centerIndex + 1] = g;
-      output[centerIndex + 2] = b;
-      // No rgba support
-      output[centerIndex + 3] = 255;
-    }
-  }
-
-  return output;
-}
-
-function multipassBilateralFilter(pixels) {
-  var passes = 4;
-  for (var i = 0; i < passes; i++) {
-    var pixelstmp = bilateralFilter(pixels);
-    var pixels = pixelstmp;
-  }
-  return pixels;
-}
-
-$('#BilateralButton').click(function() {
-  filterImage(multipassBilateralFilter);
-});
-
-
-////////////////////
-// Cartoon Effect //
-////////////////////
+// TODO: make this into a generating function / have multiple options?
 // var laplacianKernel = [1, 1, 1,
 //                        1, -8, 1,
 //                        1, 1, 1];
+Kernels.laplacian = [0,  1,   1,  1, 0,
+                     1,  1,  -2,  1, 1,
+                     1, -2,  -9, -2, 1,
+                     1,  1,  -2,  1, 1,
+                     0,  1,   1,  1, 0];
 
-var laplacianKernel = [0,  1,   1,  1, 0,
-                       1,  1,  -2,  1, 1,
-                       1, -2,  -9, -2, 1,
-                       1,  1,  -2,  1, 1,
-                       0,  1,   1,  1, 0];
-
-function convolveIntensity(pixels, kernel) {
-  output = new Uint8ClampedArray(pixels.length);
-  // It has to be a square filter (and odd dimensions)
-  dim = Math.round(Math.sqrt(kernel.length));
-  center = Math.floor(dim / 2);
-  for (y = 0; y < canvas.height; y++) {
-    for (x = 0; x < canvas.width; x++) {
-      centerIndex = (y * canvas.width + x) * 4;
-      centerI = (pixels[centerIndex] + pixels[centerIndex + 1] + pixels[centerIndex + 2]) / 3.0 ;
-
-      r = b = g = 0;
-      intensity = 0;
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          // input array is 1D, but we need to reat it as 2D
-          // What would the 2-D coordinates be? If either are <0,
-          // don't apply weight to that pixel.
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            offset = (y2d * canvas.width + x2d) * 4;
-            weight = kernel[cy * dim + cx];
-            intensity += (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3 * weight;
-            // r += pixels[offset] * weight;
-            // g += pixels[offset + 1] * weight;
-            // b += pixels[offset + 2] * weight;
-          }
-        }
-      }
-
-      // output[centerIndex] = pixels[centerIndex] - intensity;
-      // output[centerIndex + 1] = pixels[centerIndex + 1] - intensity;
-      // output[centerIndex + 2] = pixels[centerIndex + 2] - intensity;
-
-      output[centerIndex] = intensity;
-      output[centerIndex + 1] = intensity;
-      output[centerIndex + 2] = intensity;
-      // No rgba support
-      output[centerIndex + 3] = 255;
-    }
-  }
-
-  return output;
-}
-
-function intensityCutoffFilter(pixels, cutoff) {
-  var output = new Uint8ClampedArray(pixels.length);
-
-  for (var i = 0; i < pixels.length; i += 4) {
-    var intensity = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-    if (intensity < cutoff) {
-      output[i] = output[i + 1] = output[i + 2] = 0;
-    } else {
-      output[i] = output[i + 1] = output[i + 2] = 255;
-    }
-    output[i + 3] = 255;
-  }
-  return output;
-}
-
-function subtractImage(pixels1, pixels2, amount) {
-  var output = new Uint8ClampedArray(pixels1.length);
-  for (var i = 0; i < pixels1.length; i += 4) {
-    output[i] = pixels1[i] - amount * pixels2[i];
-    output[i + 1] = pixels1[i + 1] - amount * pixels2[i + 1];
-    output[i + 2] = pixels1[i + 2] - amount * pixels2[i + 2];
-    output[i + 3] = 255;
-  }
-  return output;
-}
-
-function cartoonFilter(pixels) {
-  var output = new Uint8ClampedArray(pixels.length);
-
-  var blurred = gaussianBlur(pixels);
-
-  // First, generate a dark outline and apply it to the image
-  var laplacian = convolveIntensity(blurred, laplacianKernel);
-  //var cutoff = intensityCutoffFilter(laplacian, 32);
-  var blurred = gaussianBlur(laplacian);
-  var subtracted = subtractImage(pixels, blurred, 0.3);
-
-  // Then, bilateral filter the newly-outline image
-  var bilateral = multipassBilateralFilter(subtracted);
-
-  // Finally, redo the dark outline
-  var laplacian2 = convolveIntensity(bilateral, laplacianKernel);
-  //var cutoff2 = intensityCutoffFilter(laplacian2, 32);
-  var subtracted2 = subtractImage(bilateral, laplacian2, 0.3);
-
-  return subtracted2;
-}
-
-$('#cartoonButton').click(function() {
-  filterImage(cartoonFilter);
-});
-
-//////////////////////////
-// High-boost filtering //
-//////////////////////////
-
-function highboostKernel(c) {
+// TODO: more parameters / other kernels?
+Kernels.highboost = function(c) {
   // var kernel =  [-c,        -c, -c,
   //                -c, 8 * c - 1, -c,
   //                -c,        -c, -c];
@@ -387,23 +118,473 @@ function highboostKernel(c) {
                  -1, 8 + c, -1,
                  -1,        -1, -1];
 
-  return normalizeKernel(kernel);
+  return this.normalize(kernel);
+};
+
+Kernels.sobelY = [-1, -2, -1,
+                   0,  0,  0,
+                   1,  2,  1];
+
+Kernels.sobelX = [-1, 0, 1,
+                  -2, 0, 2,
+                  -1, 0, 1];
+
+
+////////////////////////////////////////////////////
+// Extend ImageData to enable chaining of filters //
+////////////////////////////////////////////////////
+
+function IPImage(img) {
+  this.img = img;
 }
 
-function highboostFilter(pixels) {
-  var boosted = convolveIntensity(pixels, highboostKernel(4));
-  return boosted;
-  return subtractImage(pixels, boosted, 0.1);
-}
+IPImage.prototype = {
+  copy: function() {
+    // Create a copy of the current object
+    // Make a new image
+    var img = new ImageData(this.img.width, this.img.height);
+    // Copy the data into the image
+    var data = new Uint8ClampedArray(this.img.data);
+    img.data.set(data);
+    var copy = new IPImage(img);
+    return copy;
+  },
 
-$('#highboostButton').click(function() {
-  filterImage(highboostFilter);
+  setImageData: function(context) {
+    context.putImageData(this.img, 0, 0);
+  },
+
+  //////////////////////////
+  // Single Pixel Filters //
+  //////////////////////////
+
+  subtract: function(other, amount) {
+    amount = amount || 1;
+
+    var d = this.img.data;
+    var o = other.img.data;
+
+    for (var i = 0; i < d.length; i += 4) {
+      d[i] = d[i] - amount * o[i];
+      d[i + 1] = d[i + 1] - amount * o[i + 1];
+      d[i + 2] = d[i + 2] - amount * o[i + 2];
+    }
+    return this;
+  },
+
+  grayscale: function() {
+    var d = this.img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      r = d[i];
+      g = d[i + 1];
+      b = d[i + 2];
+
+      v = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    return this;
+  },
+
+  invert: function() {
+    var d = this.img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    return this;
+  },
+
+  intensity: function() {
+    var d = this.img.data;
+    for (var i = 0; i < d.length; i += 4) {
+      intensity = (d[i] + d[i + 1] + d[i + 2]) / 3.0;
+      d[i] = d[i + 1] = d[i + 2] = intensity;
+    }
+    return this;
+  },
+
+  intensityCutoff: function(cutoff) {
+    cutoff = cutoff || 128;
+    var d = this.img.data;
+
+    for (var i = 0; i < d.length; i += 4) {
+      var intensity = (d[i] + d[i + 1] + d[i + 2]) / 3.0;
+      if (intensity < cutoff) {
+        d[i] = d[i + 1] = d[i + 2] = 0;
+      }
+    }
+
+    return this;
+  },
+
+  matchIntensity: function(other) {
+    var d = this.img.data;
+    var o = other.img.data;
+
+    // FIXME: this isn't perfect? Double check by converting to HSI then back
+    // again
+    for (var i = 0; i < d.length; i += 4) {
+      scaleI = o[i] / ((d[i] + d[i + 1] + d[i + 2]) / 3.0);
+      d[i] = d[i] * scaleI;
+      d[i + 1] = d[i + 1] * scaleI;
+      d[i + 2] = d[i + 2] * scaleI;
+    }
+
+    return this;
+  },
+
+  // Borrowed from stackoveflow
+  histogramEqualize: function() {
+    var d = this.img.data;
+
+    // Compute histogram and histogram sum:
+    var hist = new Float32Array(256);
+    var sum = 0;
+    for (var i = 0; i < d.length; ++i) {
+        ++hist[~~d[i]];
+        ++sum;
+    }
+
+    // Compute integral histogram:
+    var prev = hist[0];
+    for (var i = 1; i < 256; ++i) {
+        prev = hist[i] += prev;
+    }
+
+    // Equalize image:
+    var norm = 255 / sum;
+    for (var i = 0; i < d.length; ++i) {
+        d[i] = hist[~~d[i]] * norm;
+    }
+
+    return this;
+  },
+
+  ///////////////////////////////////
+  // Linear convolution operations //
+  ///////////////////////////////////
+
+  convolve: function(kernel) {
+    var d = this.img.data;
+    // TODO: remove redundancy of boilerplate copying of data
+    var out = new Uint8ClampedArray(d.length);
+    var w = this.img.width;
+    var h = this.img.height;
+
+    var dim = Math.round(Math.sqrt(kernel.length));
+    var center = Math.floor(dim / 2);
+
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        var r = 0;
+        var g = 0;
+        var b = 0;
+        var a = 0;
+
+        for (var cy = 0; cy < dim; cy++) {
+          for (var cx = 0; cx < dim; cx++) {
+            // input array is 1D, but we need to reat it as 2D
+            // What would the 2-D coordinates be? If either are <0,
+            // don't apply weight to that pixel.
+            var y2d = y + cy - center;
+            var x2d = x + cx - center;
+            if (y2d >= 0 && y2d < h && x2d >= 0 && x2d < w) {
+              var offset = (y2d * w + x2d) * 4;
+              var weight = kernel[cy * dim + cx];
+              r += d[offset] * weight;
+              g += d[offset + 1] * weight;
+              b += d[offset + 2] * weight;
+              a += d[offset + 3] * weight;
+            }
+          }
+        }
+
+        var centerIndex = (y * w + x) * 4;
+        out[centerIndex] = r;
+        out[centerIndex + 1] = g;
+        out[centerIndex + 2] = b;
+        out[centerIndex + 3] = a + (255 - a);
+      }
+    }
+
+    // Copy data into d (is there a better way to do this?)
+    // Why doesn't this work? this.img.data = out;
+    // TODO: make this less redundant
+    for (var i = 0; i < d.length; i++) {
+      d[i] = out[i];
+    }
+
+    return this;
+  },
+
+  gaussian: function(sigma, size) {
+    sigma = sigma || 1;
+    size = size || 1;
+    var kernel = Kernels.gaussian(sigma, size);
+    return this.convolve(kernel);
+  },
+
+  laplacian: function() {
+    var kernel = Kernels.laplacian;
+    return this.convolve(kernel);
+  },
+
+  highboost: function(c) {
+    c = c || 2;
+    var kernel = Kernels.highboost(c);
+    return this.convolve(kernel);
+  },
+
+  sobel: function() {
+    var d = this.img.data;
+
+    var sy = this.copy().convolve(Kernels.sobelY).img.data;
+    var sx = this.copy().convolve(Kernels.sobelX).img.data;
+
+    function geometricMean(a, b) {
+      return Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2));
+    }
+
+    for (var i = 0; i < d.length; i += 4) {
+      // return geometric mean of horizontal- and vertical-filtered images
+      d[i] = geometricMean(sy[i], sx[i]);
+      d[i + 1] = geometricMean(sy[i + 1], sx[i + 1]);
+      d[i + 2] = geometricMean(sy[i + 2], sx[i + 2]);
+    }
+
+    return this;
+  },
+
+  ///////////////////////
+  // Nonlinear filters //
+  ///////////////////////
+
+  bilateral: function(size, sigmaG, sigmaR) {
+    size = size || 2;
+    // These defaults make a 'cartoonish' effect
+    sigmaG = sigmaG || 10;
+    sigmaR = sigmaR || 2;
+
+    var d = this.img.data;
+    var out = new Uint8ClampedArray(d.length);
+    var w = this.img.width;
+    var h = this.img.height;
+
+    var dim = size * 2 + 1;
+    var center = Math.floor(dim / 2);
+
+    // Precompute the Gaussian
+    var spacialKernel = Kernels.gaussian(sigmaG, size);
+
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var cIndex = (y * w + x) * 4;
+        var cI = (d[cIndex] + d[cIndex + 1] + d[cIndex + 2]) / 3.0 ;
+
+        // Calculate the kernel for this region (must compute now due to need
+        // to normalize the weights to sum to 1).
+        // Just need to know the intensities vector in the neighborhood
+        var kernel = [];
+        for (var cy_ = 0; cy_ < dim; cy_++) {
+          for (var cx_ = 0; cx_ < dim; cx_++) {
+            var y2d_ = y + cy_ - center;
+            var x2d_ = x + cx_ - center;
+            var range_weight;
+            if (y2d_ >= 0 && y2d_ < h && x2d_ >= 0 && x2d_ < w) {
+              // Calculate the Gaussian of the intensity
+              var offset_ = (y2d_ * w + x2d_) * 4;
+              var intensity = (d[offset_] + d[offset_ + 1] + d[offset_ + 2]) / 3.0 ;
+              var range = Math.abs(cI - intensity);
+              range_weight = Kernels.gaussianFunc(range, sigmaR);
+            } else {
+              // We're outside the image (set to 0, why not)
+              range_weight = 0;
+            }
+            // Now combine with the spatial Gaussian
+            var spatial = spacialKernel[cy_ * dim + cx_];
+            kernel.push(spatial * range_weight);
+          }
+        }
+        // Finally, normalize so weights sum to 1.
+        kernel = Kernels.normalize(kernel);
+
+        // FIXME: these can be applied with the same loop - just save the
+        // total weights and divide at the end
+
+        // Now apply the kernel
+        var r,
+            g,
+            b,
+            a;
+        r = g = b = a = 0;
+        for (var cy = 0; cy < dim; cy++) {
+          for (var cx = 0; cx < dim; cx++) {
+            // input array is 1D, but we need to reat it as 2D
+            // What would the 2-D coordinates be? If either are <0,
+            // don't apply weight to that pixel.
+            var y2d = y + cy - center;
+            var x2d = x + cx - center;
+            if (y2d >= 0 && y2d < h && x2d >= 0 && x2d < w) {
+              var offset = (y2d * w + x2d) * 4;
+              var weight = kernel[cy * dim + cx];
+              r += d[offset] * weight;
+              g += d[offset + 1] * weight;
+              b += d[offset + 2] * weight;
+              a += d[offset + 3] * weight;
+            }
+          }
+        }
+
+        out[cIndex] = r;
+        out[cIndex + 1] = g;
+        out[cIndex + 2] = b;
+        out[cIndex + 3] = a;
+      }
+    }
+    // Copy data into d (is there a better way to do this?)
+    // Why doesn't this work? this.img.data = out;
+    // TODO: make this less redundant
+    for (var i = 0; i < d.length; i++) {
+      d[i] = out[i];
+    }
+
+    return this;
+  },
+
+  median: function(size) {
+    size = size | 1;
+
+    var d = this.img.data;
+    var out = new Uint8ClampedArray(d.length);
+
+    var w = this.img.width;
+    var h = this.img.height;
+    var dim = size * 2 + 1;
+    var center = Math.floor(dim / 2);
+
+    function median(arr) {
+      arr.sort(function(a, b) { return a - b; });
+      var half = Math.floor(arr.length / 2.0);
+
+      if (arr.length % 2) {
+        return arr[half];
+      } else {
+        return (arr[half - 1] + arr[half]) / 2.0;
+      }
+    }
+
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var centerIndex = (y * w + x) * 4;
+
+        var rs = [];
+        var bs = [];
+        var gs = [];
+        var as = [];
+        for (var cy = 0; cy < dim; cy++) {
+          for (var cx = 0; cx < dim; cx++) {
+            // input array is 1D, but we need to reat it as 2D
+            // What would the 2-D coordinates be? If either are <0,
+            // don't apply weight to that pixel.
+            var y2d = y + cy - center;
+            var x2d = x + cx - center;
+            if (y2d >= 0 && y2d < h && x2d >= 0 && x2d < w) {
+              var offset = (y2d * w + x2d) * 4;
+              rs.push(d[offset]);
+              gs.push(d[offset + 1]);
+              bs.push(d[offset + 2]);
+              as.push(d[offset + 3]);
+            }
+          }
+        }
+        // Sort and find the median
+        out[centerIndex] = median(rs);
+        out[centerIndex + 1] = median(gs);
+        out[centerIndex + 2] = median(bs);
+        out[centerIndex + 3] = median(as);
+      }
+    }
+    // Copy data into d (is there a better way to do this?)
+    // Why doesn't this work? this.img.data = out;
+    // TODO: make this less redundant
+    for (var i = 0; i < d.length; i++) {
+      d[i] = out[i];
+    }
+
+    return this;
+  }
+};
+
+
+/////////////
+// Buttons //
+/////////////
+
+$('#grayScaleButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.grayscale()
+    .setImageData(ctx);
 });
 
+$('#gaussianBlurButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.gaussian(1, 1)
+    .setImageData(ctx);
+});
 
+$('#abstractionButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.bilateral()
+    .bilateral()
+    .bilateral()
+    .bilateral()
+    .setImageData(ctx);
+});
 
+$('#cartoonButton').click(function() {
+  var outline1 = new IPImage(getImageData());
+  outline1.gaussian()
+    .laplacian()
+    .intensity()
+    .gaussian();
 
+  var background = new IPImage(getImageData());
+  background.subtract(outline1, 0.2)
+    .median()
+    .median()
+    .median();
 
+  var outline2 = background.copy();
+  outline2.laplacian()
+    .intensity();
 
+  background.subtract(outline2, 0.4)
+    .setImageData(ctx);
+});
 
+$('#highboostButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.highboost()
+    .setImageData(ctx);
+});
 
+$('#sobelButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.sobel()
+    .setImageData(ctx);
+});
+
+$('#illustrationButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.highboost();
+  var outline = img.copy()
+                  .gaussian()
+                  .sobel()
+                  .intensity()
+                  .histogramEqualize()
+                  .intensityCutoff(162);
+
+  img.subtract(outline, 1)
+    .setImageData(ctx);
+});
