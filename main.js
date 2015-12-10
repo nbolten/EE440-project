@@ -340,12 +340,12 @@ function intensityCutoffFilter(pixels, cutoff) {
   return output;
 }
 
-function subtractImage(pixels1, pixels2) {
+function subtractImage(pixels1, pixels2, amount) {
   var output = new Uint8ClampedArray(pixels1.length);
   for (var i = 0; i < pixels1.length; i += 4) {
-    output[i] = pixels1[i] - pixels2[i];
-    output[i + 1] = pixels1[i + 1] - pixels2[i + 1];
-    output[i + 2] = pixels1[i + 2] - pixels2[i + 2];
+    output[i] = pixels1[i] - amount * pixels2[i];
+    output[i + 1] = pixels1[i + 1] - amount * pixels2[i + 1];
+    output[i + 2] = pixels1[i + 2] - amount * pixels2[i + 2];
     output[i + 3] = 255;
   }
   return output;
@@ -358,16 +358,17 @@ function cartoonFilter(pixels) {
 
   // First, generate a dark outline and apply it to the image
   var laplacian = convolveIntensity(blurred, laplacianKernel);
-  var cutoff = intensityCutoffFilter(laplacian, 32);
-  var subtracted = subtractImage(pixels, cutoff);
+  //var cutoff = intensityCutoffFilter(laplacian, 32);
+  var blurred = gaussianBlur(laplacian);
+  var subtracted = subtractImage(pixels, blurred, 0.3);
 
   // Then, bilateral filter the newly-outline image
   var bilateral = multipassBilateralFilter(subtracted);
 
   // Finally, redo the dark outline
   var laplacian2 = convolveIntensity(bilateral, laplacianKernel);
-  var cutoff2 = intensityCutoffFilter(laplacian2, 32);
-  var subtracted2 = subtractImage(bilateral, cutoff2);
+  //var cutoff2 = intensityCutoffFilter(laplacian2, 32);
+  var subtracted2 = subtractImage(bilateral, laplacian2, 0.3);
 
   return subtracted2;
 }
