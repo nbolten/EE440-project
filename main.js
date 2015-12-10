@@ -85,12 +85,6 @@ $('#grayScaleButton').click(function() {
 ////////////////////////////
 
 function convolve(pixels, weights) {
-  // Scale the filter so the weights sum to 1
-  // weightsum = weights.reduce(function(pv, cv) { return pv + cv; }, 0);
-  // for (i = 0; i < weights.length; i++) {
-  //   weights[i] = weights[i] / weightsum;
-  // }
-
   // It has to be a square filter (and odd dimensions)
   dim = Math.round(Math.sqrt(weights.length));
   center = Math.floor(dim / 2);
@@ -134,6 +128,17 @@ function gaussian(x, sigma) {
   return (1.0 / (2 * Math.PI * Math.pow(sigma, 2))) * Math.exp(-x / (2 * Math.pow(sigma, 2)));
 }
 
+function normalizeKernel(kernel) {
+  // Normalize (so it sums to 1)
+  var output = new Float32Array(kernel.length);
+
+  var weightsum = kernel.reduce(function(a, b) { return a + b; }, 0);
+  for (i = 0; i < kernel.length; i++) {
+    output[i] = kernel[i] / weightsum;
+  }
+  return output;
+}
+
 function gaussianKernel(size, sigma) {
   // Will generate a gaussian-looking kernel for a given variance
   dim = size * 2 + 1;
@@ -149,11 +154,7 @@ function gaussianKernel(size, sigma) {
   // Flatten
   var kernel = kernel2D.reduce(function(a, b) { return a.concat(b); });
   // Normalize (so it sums to 1)
-  var weightsum = kernel.reduce(function(a, b) { return a + b; }, 0);
-  for (i = 0; i < kernel.length; i++) {
-    kernel[i] = kernel[i] / weightsum;
-  }
-
+  kernel = normalizeKernel(kernel)
   return kernel;
 }
 
@@ -219,10 +220,7 @@ function bilateralFilter(pixels) {
       }
 
       // Finally, normalize so weights sum to 1.
-      weightsum = weights.reduce(function(a, b) { return a + b; }, 0);
-      for (i = 0; i < weights.length; i++) {
-        weights[i] = weights[i] / weightsum;
-      }
+      weights = normalizeKernel(weights);
 
       r = g = b = 0;
       for (cy = 0; cy < dim; cy++) {
@@ -376,6 +374,36 @@ function cartoonFilter(pixels) {
 $('#cartoonButton').click(function() {
   filterImage(cartoonFilter);
 });
+
+//////////////////////////
+// High-boost filtering //
+//////////////////////////
+
+function highboostKernel(c) {
+  // var kernel =  [-c,        -c, -c,
+  //                -c, 8 * c - 1, -c,
+  //                -c,        -c, -c];
+  var kernel =  [-1,        -1, -1,
+                 -1, 8 + c, -1,
+                 -1,        -1, -1];
+
+  return normalizeKernel(kernel);
+}
+
+function highboostFilter(pixels) {
+  var boosted = convolveIntensity(pixels, highboostKernel(4));
+  return boosted;
+  return subtractImage(pixels, boosted, 0.1);
+}
+
+$('#highboostButton').click(function() {
+  filterImage(highboostFilter);
+});
+
+
+
+
+
 
 
 
