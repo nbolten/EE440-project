@@ -533,6 +533,19 @@ $('#gaussianBlurButton').click(function() {
     .setImageData(ctx);
 });
 
+$('#highboostButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.highboost()
+    .setImageData(ctx);
+});
+
+$('#sobelButton').click(function() {
+  var img = new IPImage(getImageData());
+  img.sobel()
+    .setImageData(ctx);
+});
+
+
 $('#abstractionButton').click(function() {
   var img = new IPImage(getImageData());
   img.bilateral()
@@ -543,35 +556,36 @@ $('#abstractionButton').click(function() {
 });
 
 $('#cartoonButton').click(function() {
-  var outline1 = new IPImage(getImageData());
-  outline1.gaussian()
-    .laplacian()
-    .intensity()
-    .gaussian();
+  // Generate an outline by doing gaussian + laplacian + gaussian
+  var img = new IPImage(getImageData());
+  var outline1 = img.copy()
+                   .gaussian()
+                   .laplacian()
+                   .intensity()
+                   .gaussian();
 
-  var background = new IPImage(getImageData());
-  background.subtract(outline1, 0.2)
+  // Add the outline
+  img.subtract(outline1, 0.3)
+
+  // Median blur
+  img.median()
     .median()
     .median()
     .median();
 
-  var outline2 = background.copy();
-  outline2.laplacian()
-    .intensity();
+  // Make a new outline from the newest image
+  var outline2 = img.copy()
+                   .laplacian()
+                   .intensity();
 
-  background.subtract(outline2, 0.4)
-    .setImageData(ctx);
-});
+  // Add the outline
+  img.subtract(outline2, 0.3);
 
-$('#highboostButton').click(function() {
-  var img = new IPImage(getImageData());
-  img.highboost()
-    .setImageData(ctx);
-});
-
-$('#sobelButton').click(function() {
-  var img = new IPImage(getImageData());
-  img.sobel()
+  // Make another outline
+  var outline3 = img.copy()
+                   .laplacian()
+                   .intensity();
+  img.subtract(outline3, 0.3)
     .setImageData(ctx);
 });
 
