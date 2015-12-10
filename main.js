@@ -167,9 +167,112 @@ $('#gaussianBlurButton').click(function() {
   filterImage(gaussianBlur);
 });
 
-var laplacianKernel = [1, 1, 1,
-                       1, -8, 1,
-                       1, 1, 1];
+//////////////////////
+// Bilateral filter //
+//////////////////////
+
+
+function bilateralFilter(pixels) {
+  // FIXME: these need to be arguments
+  kernelSize = 2;
+  dim = kernelSize * 2 + 1;
+  // Running with 10, 2 like 5 times makes a cartoon effect
+  sigmaG = 10;
+  sigmaR = 2;
+
+  // Output should be a different data structure, as iterating over the same
+  // array that's being outputted will result in redundant convolutions.
+  output = new Uint8ClampedArray(pixels.length);
+
+  center = Math.floor(dim / 2);
+
+  // Precompute the Gaussian
+  myGaussianKernel = gaussianKernel(kernelSize, sigmaG);
+
+  for (y = 0; y < canvas.height; y++) {
+    for (x = 0; x < canvas.width; x++) {
+      centerIndex = (y * canvas.width + x) * 4;
+      centerI = (pixels[centerIndex] + pixels[centerIndex + 1] + pixels[centerIndex + 2]) / 3.0 ;
+
+      // Calculate the range kernel (must compute now due to need
+      // to normalize the weights to sum to 1).
+      // Just need to know the intensities vector in the neighborhood
+      weights = [];
+      for (cy = 0; cy < dim; cy++) {
+        for (cx = 0; cx < dim; cx++) {
+          y2d = y + cy - center;
+          x2d = x + cx - center;
+          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
+            // Get the intensity
+            offset = (y2d * canvas.width + x2d) * 4;
+            otherI = (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3.0 ;
+            intensity_diff = Math.abs(centerI - otherI);
+            weight_range = gaussian(intensity_diff, sigmaR);
+          } else {
+            // We're outside the image (set to 0, why not)
+            weight_range = 0;
+          }
+          // Now combine with the Gaussian
+          weight_gaussian = myGaussianKernel[cy * dim + cx];
+          weights.push(weight_gaussian * weight_range);
+        }
+      }
+
+      // Finally, normalize so weights sum to 1.
+      weightsum = weights.reduce(function(a, b) { return a + b; }, 0);
+      for (i = 0; i < weights.length; i++) {
+        weights[i] = weights[i] / weightsum;
+      }
+
+      r = g = b = 0;
+      for (cy = 0; cy < dim; cy++) {
+        for (cx = 0; cx < dim; cx++) {
+          // input array is 1D, but we need to reat it as 2D
+          // What would the 2-D coordinates be? If either are <0,
+          // don't apply weight to that pixel.
+          y2d = y + cy - center;
+          x2d = x + cx - center;
+          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
+            offset = (y2d * canvas.width + x2d) * 4;
+            weight = weights[cy * dim + cx];
+            r += pixels[offset] * weight;
+            g += pixels[offset + 1] * weight;
+            b += pixels[offset + 2] * weight;
+          }
+        }
+      }
+
+      output[centerIndex] = r;
+      output[centerIndex + 1] = g;
+      output[centerIndex + 2] = b;
+      // No rgba support
+      output[centerIndex + 3] = 255;
+    }
+  }
+
+  return output;
+}
+
+function multipassBilateralFilter(pixels) {
+  var passes = 4;
+  for (var i = 0; i < passes; i++) {
+    var pixelstmp = bilateralFilter(pixels);
+    var pixels = pixelstmp;
+  }
+  return pixels;
+}
+
+$('#BilateralButton').click(function() {
+  filterImage(multipassBilateralFilter);
+});
+
+
+////////////////////
+// Cartoon Effect //
+////////////////////
+// var laplacianKernel = [1, 1, 1,
+//                        1, -8, 1,
+//                        1, 1, 1];
 
 var laplacianKernel = [0,  1,   1,  1, 0,
                        1,  1,  -2,  1, 1,
@@ -259,7 +362,7 @@ function cartoonFilter(pixels) {
   var subtracted = subtractImage(pixels, cutoff);
 
   // Then, bilateral filter the newly-outline image
-  var bilateral = bilateralFilter(subtracted);
+  var bilateral = multipassBilateralFilter(subtracted);
 
   // Finally, redo the dark outline
   var laplacian2 = convolveIntensity(bilateral, laplacianKernel);
@@ -274,101 +377,4 @@ $('#cartoonButton').click(function() {
 });
 
 
-//////////////////////
-// Bilateral filter //
-//////////////////////
 
-
-function bilateralFilter(pixels) {
-  // FIXME: these need to be arguments
-  kernelSize = 2;
-  dim = kernelSize * 2 + 1;
-  // Running with 10, 2 like 5 times makes a cartoon effect
-  sigmaG = 10;
-  sigmaR = 3;
-
-  // Output should be a different data structure, as iterating over the same
-  // array that's being outputted will result in redundant convolutions.
-  output = new Uint8ClampedArray(pixels.length);
-
-  center = Math.floor(dim / 2);
-
-  // Precompute the Gaussian
-  myGaussianKernel = gaussianKernel(kernelSize, sigmaG);
-
-  for (y = 0; y < canvas.height; y++) {
-    for (x = 0; x < canvas.width; x++) {
-      centerIndex = (y * canvas.width + x) * 4;
-      centerI = (pixels[centerIndex] + pixels[centerIndex + 1] + pixels[centerIndex + 2]) / 3.0 ;
-
-      // Calculate the range kernel (must compute now due to need
-      // to normalize the weights to sum to 1).
-      // Just need to know the intensities vector in the neighborhood
-      weights = [];
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            // Get the intensity
-            offset = (y2d * canvas.width + x2d) * 4;
-            otherI = (pixels[offset] + pixels[offset + 1] + pixels[offset + 2]) / 3.0 ;
-            intensity_diff = Math.abs(centerI - otherI);
-            weight_range = gaussian(intensity_diff, sigmaR);
-          } else {
-            // We're outside the image (set to 0, why not)
-            weight_range = 0;
-          }
-          // Now combine with the Gaussian
-          weight_gaussian = myGaussianKernel[cy * dim + cx];
-          weights.push(weight_gaussian * weight_range);
-        }
-      }
-
-      // Finally, normalize so weights sum to 1.
-      weightsum = weights.reduce(function(a, b) { return a + b; }, 0);
-      for (i = 0; i < weights.length; i++) {
-        weights[i] = weights[i] / weightsum;
-      }
-
-      r = g = b = 0;
-      for (cy = 0; cy < dim; cy++) {
-        for (cx = 0; cx < dim; cx++) {
-          // input array is 1D, but we need to reat it as 2D
-          // What would the 2-D coordinates be? If either are <0,
-          // don't apply weight to that pixel.
-          y2d = y + cy - center;
-          x2d = x + cx - center;
-          if (y2d >= 0 && y2d < canvas.height && x2d >= 0 && x2d < canvas.width) {
-            offset = (y2d * canvas.width + x2d) * 4;
-            weight = weights[cy * dim + cx];
-            r += pixels[offset] * weight;
-            g += pixels[offset + 1] * weight;
-            b += pixels[offset + 2] * weight;
-          }
-        }
-      }
-
-      output[centerIndex] = r;
-      output[centerIndex + 1] = g;
-      output[centerIndex + 2] = b;
-      // No rgba support
-      output[centerIndex + 3] = 255;
-    }
-  }
-
-  return output;
-}
-
-function multipassBilateralFilter(pixels) {
-  var passes = 4;
-  for (var i = 0; i < passes; i++) {
-    var pixelstmp = bilateralFilter(pixels);
-    var pixels = pixelstmp;
-  }
-  return pixels;
-}
-
-$('#BilateralButton').click(function() {
-  filterImage(multipassBilateralFilter);
-});
