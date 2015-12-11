@@ -4,19 +4,35 @@
 
 var imageLoader = document.getElementById('imageLoader');
     imageLoader.addEventListener('change', handleImage, false);
-var canvas = document.getElementById('imageCanvas');
+
+var originalCanvas = document.getElementById('originalCanvas');
+var originalCtx = originalCanvas.getContext('2d');
+
+var canvas = document.getElementById('modifiedCanvas');
 var ctx = canvas.getContext('2d');
 
 function loadImage(image) {
   // Resize the image to fit nicely in the div (and increase filter speed!)
-  canvasDivWidth = $('#canvas-container').width();
+  canvasDivWidtho = $('#original-canvas-container').width();
   if (image.width > canvas.width) {
-    canvas.width = canvasDivWidth;
+    originalCanvas.width = canvasDivWidtho;
+    originalCanvas.height = originalCanvas.width * image.height / image.width;
+  } else {
+    originalCanvas.width = image.width;
+    originalCanvas.height = image.height;
+  }
+  originalCtx.drawImage(image, 0, 0, originalCanvas.width, originalCanvas.height);
+  window.srcPixels = new Uint8ClampedArray(originalCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height).data);
+
+  canvasDivWidthm = $('#modified-canvas-container').width();
+  if (image.width > canvas.width) {
+    canvas.width = canvasDivWidthm;
     canvas.height = canvas.width * image.height / image.width;
   } else {
     canvas.width = image.width;
     canvas.height = image.height;
   }
+
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   window.srcPixels = new Uint8ClampedArray(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
 }
@@ -99,24 +115,18 @@ Kernels.gaussian = function(sigma, size) {
   return kernel;
 };
 
-// TODO: make this into a generating function / have multiple options?
-// var laplacianKernel = [1, 1, 1,
-//                        1, -8, 1,
-//                        1, 1, 1];
-Kernels.laplacian = [0,  1,   1,  1, 0,
-                     1,  1,  -2,  1, 1,
-                     1, -2,  -9, -2, 1,
-                     1,  1,  -2,  1, 1,
-                     0,  1,   1,  1, 0];
+Kernels.laplacian = function(size) {
+  var dim = size * 2 + 1;
+  var kernel = Array(dim * dim);
+  kernel.fill(1);
+  kernel[Math.floor(kernel.length / 2)] = -(kernel.length - 1);
+  return kernel;
+};
 
-// TODO: more parameters / other kernels?
 Kernels.highboost = function(c) {
-  // var kernel =  [-c,        -c, -c,
-  //                -c, 8 * c - 1, -c,
-  //                -c,        -c, -c];
-  var kernel =  [-1,        -1, -1,
-                 -1, 8 + c, -1,
-                 -1,        -1, -1];
+  var kernel =  [-c,        -c, -c,
+                 -c, 8 * c + 1, -c,
+                 -c,        -c, -c];
 
   return this.normalize(kernel);
 };
@@ -191,6 +201,19 @@ IPImage.prototype = {
       d[i] = 255 - d[i];
       d[i + 1] = 255 - d[i + 1];
       d[i + 2] = 255 - d[i + 2];
+    }
+    return this;
+  },
+
+  // Color quantization
+  quantize: function(bits) {
+    bits = bits || 4;
+    var d = this.img.data;
+    var factor = Math.pow(2, bits) / Math.pow(2, 8);
+    for (var i = 0; i < d.length; i += 4) {
+      d[i] = Math.floor(d[i] * factor) / factor;
+      d[i + 1] = Math.floor(d[i + 1] * factor) / factor;
+      d[i + 2] = Math.floor(d[i + 2] * factor) / factor;
     }
     return this;
   },
@@ -325,8 +348,9 @@ IPImage.prototype = {
     return this.convolve(kernel);
   },
 
-  laplacian: function() {
-    var kernel = Kernels.laplacian;
+  laplacian: function(size) {
+    size = size || 2;
+    var kernel = Kernels.laplacian(size);
     return this.convolve(kernel);
   },
 
@@ -545,59 +569,93 @@ $('#sobelButton').click(function() {
     .setImageData(ctx);
 });
 
+////////////////
+// Effects UI //
+////////////////
+
+// TODO: make less redundant
+// Abstraction Effect
+$('#abstractionSize').mousemove(function() {
+  $('#abstractionSizeOutput').text(this.value);
+});
+$('#abstractionSigmaR').mousemove(function() {
+  $('#abstractionSigmaROutput').text(this.value);
+});
+$('#abstractionSigmaG').mousemove(function() {
+  $('#abstractionSigmaGOutput').text(this.value);
+});
+$('#abstractionPasses').mousemove(function() {
+  $('#abstractionPassesOutput').text(this.value);
+});
 
 $('#abstractionButton').click(function() {
+  // Get slide settings
+  var size = $('#abstractionSize').val();
+  var sigmaR = $('#abstractionSigmaR').val();
+  var sigmaG = $('#abstractionSigmaG').val();
+  var passes = parseInt($('#abstractionPasses').val());
+
   var img = new IPImage(getImageData());
-  img.bilateral()
-    .bilateral()
-    .bilateral()
-    .bilateral()
-    .setImageData(ctx);
+  for (var i = 0; i < passes; i++) {
+    img.bilateral(size, sigmaG, sigmaR);
+  }
+  img.setImageData(ctx);
+});
+
+// Cartoon effect
+$('#cartoonOutline').mousemove(function() {
+  $('#cartoonOutlineOutput').text(this.value);
+});
+$('#cartoonSmooth').mousemove(function() {
+  $('#cartoonSmoothOutput').text(this.value);
+});
+$('#cartoonQuant').mousemove(function() {
+  $('#cartoonQuantOutput').text(this.value);
 });
 
 $('#cartoonButton').click(function() {
+  var outline = $('#cartoonOutline').val();
+  var quantization = $('#cartoonQuant').val();
+  var smoothness = $('#cartoonSmooth').val();
   // Generate an outline by doing gaussian + laplacian + gaussian
   var img = new IPImage(getImageData());
-  var outline1 = img.copy()
-                   .gaussian()
-                   .laplacian()
+
+  img.gaussian()
+    .gaussian();
+
+  for (var i = 0; i < smoothness; i++) {
+    img.bilateral(2, 10, 2);
+  }
+
+  var outlines = img.copy()
+                   .laplacian(outline)
                    .intensity()
                    .gaussian();
 
-  // Add the outline
-  img.subtract(outline1, 0.3)
-
-  // Median blur
-  img.median()
-    .median()
-    .median()
-    .median();
-
-  // Make a new outline from the newest image
-  var outline2 = img.copy()
-                   .laplacian()
-                   .intensity();
-
-  // Add the outline
-  img.subtract(outline2, 0.3);
-
-  // Make another outline
-  var outline3 = img.copy()
-                   .laplacian()
-                   .intensity();
-  img.subtract(outline3, 0.3)
+  img.quantize(quantization)
+    .subtract(outlines, 0.7)
     .setImageData(ctx);
+});
+
+// Illustration effect
+$('#illustrationDetail').mousemove(function() {
+  $('#illustrationDetailOutput').text(this.value);
+});
+$('#illustrationCutoff').mousemove(function() {
+  $('#illustrationCutoffOutput').text(this.value);
 });
 
 $('#illustrationButton').click(function() {
   var img = new IPImage(getImageData());
-  img.highboost();
+  var detail = $('#illustrationDetail').val();
+  var cutoff = $('#illustrationCutoff').val();
+  img.highboost(detail);
   var outline = img.copy()
                   .gaussian()
                   .sobel()
                   .intensity()
                   .histogramEqualize()
-                  .intensityCutoff(162);
+                  .intensityCutoff(cutoff);
 
   img.subtract(outline, 1)
     .setImageData(ctx);
