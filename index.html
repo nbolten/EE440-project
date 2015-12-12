@@ -25,7 +25,18 @@
   cursor: inherit;
   display: block;
 }
-
+input[type=range]{
+    -webkit-appearance: none;
+}
+input[type=range]::-webkit-slider-runnable-track {
+    background: #ddd;
+}
+input[type=range]::-moz-range-track {
+    background: #ddd;
+}
+input[type=range]::-ms-track {
+    background: #ddd;
+}
 .slider {
   width: 100%;
   margin-bottom: 20px;
