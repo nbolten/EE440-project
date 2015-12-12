@@ -27,14 +27,25 @@
 }
 input[type=range]{
     -webkit-appearance: none;
+    margin: 18px 0;
+}
+input[type=range]::-ms-track {
+    background: transparent;
 }
 input[type=range]::-webkit-slider-runnable-track {
+    height: 8px;
     background: #ddd;
+}
+input[type=range]::-webkit-slider-thumb {
+    margin-top: -8px;
 }
 input[type=range]::-moz-range-track {
     background: #ddd;
 }
-input[type=range]::-ms-track {
+input[type=range]::-ms-fill-lower {
+    background: #ddd;
+}
+input[type=range]::-moz-fill-upper {
     background: #ddd;
 }
 .slider {
